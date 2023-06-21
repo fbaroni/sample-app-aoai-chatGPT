@@ -11,68 +11,6 @@ from semantic_kernel.connectors.ai.open_ai import OpenAITextCompletion, AzureTex
 from flask import Flask, Response, request, jsonify
 from dotenv import load_dotenv
 
-
-
-# kernel = sk.Kernel()
-
-# api_key, org_id = sk.openai_settings_from_dot_env()
-# kernel.add_chat_service(
-#     "chat-gpt", sk_oai.OpenAIChatCompletion("gpt-3.5-turbo", api_key, org_id)
-# )
-
-# prompt_config = sk.PromptTemplateConfig.from_completion_parameters(
-#     max_tokens=2000, temperature=0.7, top_p=0.8
-# )
-
-# prompt_template = sk.ChatPromptTemplate(
-#     "{{$user_input}}", kernel.prompt_template_engine, prompt_config
-# )
-
-# prompt_template.add_system_message(system_message)
-# prompt_template.add_user_message("Hi there, who are you?")
-# prompt_template.add_assistant_message(
-#     "I am Mosscap, a chat bot. I'm trying to figure out what people need."
-# )
-
-# function_config = sk.SemanticFunctionConfig(prompt_config, prompt_template)
-# chat_function = kernel.register_semantic_function("ChatBot", "Chat", function_config)
-
-
-# async def chat() -> bool:
-#     context_vars = sk.ContextVariables()
-
-#     try:
-#         user_input = input("User:> ")
-#         context_vars["user_input"] = user_input
-#     except KeyboardInterrupt:
-#         print("\n\nExiting chat...")
-#         return False
-#     except EOFError:
-#         print("\n\nExiting chat...")
-#         return False
-
-#     if user_input == "exit":
-#         print("\n\nExiting chat...")
-#         return False
-
-#     answer = await kernel.run_async(chat_function, input_vars=context_vars)
-#     print(f"Clippy:> {answer}")
-#     return True
-
-
-# async def main() -> None:
-#     chatting = True
-#     while chatting:
-#         chatting = await chat()
-
-
-# if __name__ == "__main__":
-#     asyncio.run(main())
-
-
-
-
-
 load_dotenv()
 
 app = Flask(__name__)
@@ -226,26 +164,6 @@ def conversation_with_data(request):
         else:
             return Response(None, mimetype='text/event-stream')
 
-def stream_without_data(response):
-    responseText = ""
-    for line in response:
-        deltaText = line["choices"][0]["delta"].get('content')
-        if deltaText and deltaText != "[DONE]":
-            responseText += deltaText
-
-        response_obj = {
-            "id": line["id"],
-            "model": line["model"],
-            "created": line["created"],
-            "object": line["object"],
-            "choices": [{
-                "messages": [{
-                    "role": "assistant",
-                    "content": responseText
-                }]
-            }]
-        }
-        yield json.dumps(response_obj).replace("\n", "\\n") + "\n"
 
 
 async def conversation_without_data(request):
@@ -276,6 +194,7 @@ async def conversation_without_data(request):
     prompt_template.add_assistant_message(
         "I am Clippy, a chat bot. I'm trying to figure out what people need."
     )
+
     # convert request messages to a list of strings
     for message in request_messages:  
         prompt_template.add_user_message(message["content"])
@@ -285,32 +204,21 @@ async def conversation_without_data(request):
     chat_function = kernel.register_semantic_function("ChatBot", "Chat", function_config)
     context_vars = sk.ContextVariables()
     bot_answer = await kernel.run_async(chat_function, input_vars=context_vars)
-    response = str(bot_answer)
 
-    return response
-
-    # Run your prompt
-    print(prompt()) # => Robots must not harm humans.
-    if not SHOULD_STREAM:
-        response_obj = {
-            "id": response,
-            "model": response.model,
-            "created": response.created,
-            "object": response.object,
+    response_obj = {
+            "id": 1,
+            "model": "gpt-35-turbo",
+            "created": 0,
+            "object": "",
             "choices": [{
                 "messages": [{
                     "role": "assistant",
-                    "content": response.choices[0].message.content
+                    "content": str(bot_answer)
                 }]
             }]
         }
 
-    #     return jsonify(response_obj), 200
-    else:
-        if request.method == "POST":
-            return Response(stream_without_data(response), mimetype='text/event-stream')
-        else:
-            return Response(None, mimetype='text/event-stream')
+    return jsonify(response_obj), 200
 
 @app.route("/conversation", methods=["GET", "POST"])
 async def conversation():
