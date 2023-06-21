@@ -3,8 +3,75 @@ import os
 import logging
 import requests
 import openai
+import asyncio
+import semantic_kernel as sk
+import semantic_kernel.connectors.ai.open_ai as sk_oai
+import logging
+from semantic_kernel.connectors.ai.open_ai import OpenAITextCompletion, AzureTextCompletion
 from flask import Flask, Response, request, jsonify
 from dotenv import load_dotenv
+
+
+
+# kernel = sk.Kernel()
+
+# api_key, org_id = sk.openai_settings_from_dot_env()
+# kernel.add_chat_service(
+#     "chat-gpt", sk_oai.OpenAIChatCompletion("gpt-3.5-turbo", api_key, org_id)
+# )
+
+# prompt_config = sk.PromptTemplateConfig.from_completion_parameters(
+#     max_tokens=2000, temperature=0.7, top_p=0.8
+# )
+
+# prompt_template = sk.ChatPromptTemplate(
+#     "{{$user_input}}", kernel.prompt_template_engine, prompt_config
+# )
+
+# prompt_template.add_system_message(system_message)
+# prompt_template.add_user_message("Hi there, who are you?")
+# prompt_template.add_assistant_message(
+#     "I am Mosscap, a chat bot. I'm trying to figure out what people need."
+# )
+
+# function_config = sk.SemanticFunctionConfig(prompt_config, prompt_template)
+# chat_function = kernel.register_semantic_function("ChatBot", "Chat", function_config)
+
+
+# async def chat() -> bool:
+#     context_vars = sk.ContextVariables()
+
+#     try:
+#         user_input = input("User:> ")
+#         context_vars["user_input"] = user_input
+#     except KeyboardInterrupt:
+#         print("\n\nExiting chat...")
+#         return False
+#     except EOFError:
+#         print("\n\nExiting chat...")
+#         return False
+
+#     if user_input == "exit":
+#         print("\n\nExiting chat...")
+#         return False
+
+#     answer = await kernel.run_async(chat_function, input_vars=context_vars)
+#     print(f"Clippy:> {answer}")
+#     return True
+
+
+# async def main() -> None:
+#     chatting = True
+#     while chatting:
+#         chatting = await chat()
+
+
+# if __name__ == "__main__":
+#     asyncio.run(main())
+
+
+
+
 
 load_dotenv()
 
@@ -49,6 +116,7 @@ def is_chat_model():
     return False
 
 def should_use_data():
+                
     if AZURE_SEARCH_SERVICE and AZURE_SEARCH_INDEX and AZURE_SEARCH_KEY:
         return True
     return False
@@ -73,13 +141,11 @@ def prepare_body_headers_with_data(request):
                     "fieldsMapping": {
                         "contentField": AZURE_SEARCH_CONTENT_COLUMNS.split("|") if AZURE_SEARCH_CONTENT_COLUMNS else [],
                         "titleField": AZURE_SEARCH_TITLE_COLUMN if AZURE_SEARCH_TITLE_COLUMN else None,
-                        "urlField": AZURE_SEARCH_URL_COLUMN if AZURE_SEARCH_URL_COLUMN else None,
-                        "filepathField": AZURE_SEARCH_FILENAME_COLUMN if AZURE_SEARCH_FILENAME_COLUMN else None
                     },
                     "inScope": True if AZURE_SEARCH_ENABLE_IN_DOMAIN.lower() == "true" else False,
                     "topNDocuments": AZURE_SEARCH_TOP_K,
-                    "queryType": "semantic" if AZURE_SEARCH_USE_SEMANTIC_SEARCH.lower() == "true" else "simple",
-                    "semanticConfiguration": AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG if AZURE_SEARCH_USE_SEMANTIC_SEARCH.lower() == "true" and AZURE_SEARCH_SEMANTIC_SEARCH_CONFIG else "",
+                    "queryType": "simple",
+                    "semanticConfiguration": "",
                     "roleInformation": AZURE_OPENAI_SYSTEM_MESSAGE
                 }
             }
@@ -182,36 +248,49 @@ def stream_without_data(response):
         yield json.dumps(response_obj).replace("\n", "\\n") + "\n"
 
 
-def conversation_without_data(request):
-    openai.api_type = "azure"
-    openai.api_base = f"https://{AZURE_OPENAI_RESOURCE}.openai.azure.com/"
-    openai.api_version = "2023-03-15-preview"
-    openai.api_key = AZURE_OPENAI_KEY
-
+async def conversation_without_data(request):
+    system_message = """
+    You are a chat bot. Your name is Clippy and
+    you have one goal: figure out what users need.
+    Your full name, should you need to know it, is
+    James Clippy. You communicate
+    effectively.
+    """
+    kernel = sk.Kernel()
+    deployment, api_key, endpoint = sk.azure_openai_settings_from_dot_env()
     request_messages = request.json["messages"]
-    messages = [
-        {
-            "role": "system",
-            "content": AZURE_OPENAI_SYSTEM_MESSAGE
-        }
-    ]
-
-    for message in request_messages:
-        messages.append({
-            "role": message["role"] ,
-            "content": message["content"]
-        })
-
-    response = openai.ChatCompletion.create(
-        engine=AZURE_OPENAI_MODEL,
-        messages = messages,
-        temperature=float(AZURE_OPENAI_TEMPERATURE),
-        max_tokens=int(AZURE_OPENAI_MAX_TOKENS),
-        top_p=float(AZURE_OPENAI_TOP_P),
-        stop=AZURE_OPENAI_STOP_SEQUENCE.split("|") if AZURE_OPENAI_STOP_SEQUENCE else None,
-        stream=SHOULD_STREAM
+    kernel.add_chat_service(
+        "gpt-35-turbo", sk_oai.AzureChatCompletion(deployment, endpoint, api_key)
     )
 
+    prompt_config = sk.PromptTemplateConfig.from_completion_parameters(
+        max_tokens=2000, temperature=0.7, top_p=0.8
+    )
+
+    prompt_template = sk.ChatPromptTemplate(
+        "{{$user_input}}", kernel.prompt_template_engine, prompt_config
+    )
+
+    prompt_template.add_system_message(system_message)
+    prompt_template.add_user_message("Hi there, who are you?")
+    prompt_template.add_assistant_message(
+        "I am Clippy, a chat bot. I'm trying to figure out what people need."
+    )
+    # convert request messages to a list of strings
+    for message in request_messages:  
+        prompt_template.add_user_message(message["content"])
+
+
+    function_config = sk.SemanticFunctionConfig(prompt_config, prompt_template)
+    chat_function = kernel.register_semantic_function("ChatBot", "Chat", function_config)
+    context_vars = sk.ContextVariables()
+    bot_answer = await kernel.run_async(chat_function, input_vars=context_vars)
+    response = str(bot_answer)
+
+    return response
+
+    # Run your prompt
+    print(prompt()) # => Robots must not harm humans.
     if not SHOULD_STREAM:
         response_obj = {
             "id": response,
@@ -226,7 +305,7 @@ def conversation_without_data(request):
             }]
         }
 
-        return jsonify(response_obj), 200
+    #     return jsonify(response_obj), 200
     else:
         if request.method == "POST":
             return Response(stream_without_data(response), mimetype='text/event-stream')
@@ -234,16 +313,19 @@ def conversation_without_data(request):
             return Response(None, mimetype='text/event-stream')
 
 @app.route("/conversation", methods=["GET", "POST"])
-def conversation():
+async def conversation():
     try:
         use_data = should_use_data()
         if use_data:
             return conversation_with_data(request)
         else:
-            return conversation_without_data(request)
+            return await conversation_without_data(request)
     except Exception as e:
         logging.exception("Exception in /conversation")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
+    kernel = sk.Kernel()
+    deployment, api_key, endpoint = sk.azure_openai_settings_from_dot_env()
+    kernel.add_text_completion_service("dv", AzureTextCompletion(deployment, endpoint, api_key))
     app.run()
